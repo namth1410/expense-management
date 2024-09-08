@@ -11,6 +11,9 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "notification": {
+      "vapidPublicKey": "BEhszpKJ48oYHJ4tGi5KpVWprDo9L1P1c2ZRaO4skj9N8lo7wO32uYaaPkfk1PoYdC0LEb21KqtJgwnfSgeYnD0"
+    },
     "ios": {
       "supportsTablet": true
     },
