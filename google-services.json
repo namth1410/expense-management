@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "952359741968",
+    "project_id": "expense-management-2c2cb",
+    "storage_bucket": "expense-management-2c2cb.appspot.com"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:952359741968:android:8f635355113e82e44ef895",
+        "android_client_info": {
+          "package_name": "com.stickersmash"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBG2eISUEDTtxwBVGjsvupidMnUDaq3eXk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
