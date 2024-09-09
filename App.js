@@ -1,23 +1,34 @@
 import { Picker } from "@react-native-picker/picker";
-import Constants from "expo-constants";
+import { Timestamp } from "firebase/firestore";
+import { useEffect, useRef, useState } from "react";
 import * as Device from "expo-device";
 import * as Notifications from "expo-notifications";
-import { useEffect, useRef, useState } from "react";
+import AntDesign from "@expo/vector-icons/AntDesign";
+import Constants from "expo-constants";
+
 import {
   Button,
+  FlatList,
   Modal,
   Platform,
+  SafeAreaView,
   StyleSheet,
   Text,
   TextInput,
   ToastAndroid,
-  View,
-  FlatList,
-  SafeAreaView,
   TouchableOpacity,
+  View,
+  StatusBar,
 } from "react-native";
-import { createExpense, listenToExpenses, updateExpense } from "./expenseApi"; // Import API tạo chi phí
 import { MultiSelect } from "react-native-element-dropdown";
+import { PEOPLE_LIST } from "./constants";
+import {
+  createExpense,
+  getAllPushTokens,
+  listenToExpenses,
+  savePushTokenToDatabase,
+  updateExpense,
+} from "./expenseApi";
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
@@ -27,24 +38,41 @@ Notifications.setNotificationHandler({
   }),
 });
 
-async function sendPushNotification(expoPushToken) {
-  const message = {
-    to: expoPushToken,
-    sound: "default",
-    title: "Original Title",
-    body: "And here is the body!",
-    data: { someData: "goes here" },
-  };
+async function sendPushNotification(tokens) {
+  async function sendNotification(token) {
+    const message = {
+      to: token,
+      sound: "default",
+      title: "Có 1 chi phí mới",
+      body: "Xem ngay thôi!",
+      data: { someData: "goes here" },
+      android: {
+        priority: "high",
+        visibility: "public",
+      },
+    };
 
-  await fetch("https://exp.host/--/api/v2/push/send", {
-    method: "POST",
-    headers: {
-      Accept: "application/json",
-      "Accept-encoding": "gzip, deflate",
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(message),
-  });
+    try {
+      const response = await fetch("https://exp.host/--/api/v2/push/send", {
+        method: "POST",
+        headers: {
+          Accept: "application/json",
+          "Accept-encoding": "gzip, deflate",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(message),
+      });
+
+      const responseJson = await response.json();
+      console.log(`Push notification sent to ${token}:`, responseJson);
+    } catch (error) {
+      console.error(`Error sending push notification to ${token}:`, error);
+    }
+  }
+
+  for (const token of tokens) {
+    sendNotification(token);
+  }
 }
 
 function handleRegistrationError(errorMessage) {
@@ -59,6 +87,7 @@ async function registerForPushNotificationsAsync() {
       importance: Notifications.AndroidImportance.MAX,
       vibrationPattern: [0, 250, 250, 250],
       lightColor: "#FF231F7C",
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
     });
   }
 
@@ -113,16 +142,14 @@ export default function App() {
   const [selectedExpense, setSelectedExpense] = useState(null);
 
   const [modalVisible, setModalVisible] = useState(false);
-  const [editModalVisible, setEditModalVisible] = useState(false); // Modal chỉnh sửa
+  const [editModalVisible, setEditModalVisible] = useState(false);
 
   const notificationListener = useRef();
   const responseListener = useRef();
 
-  // Hàm xử lý tạo chi phí
   const handleCreateExpense = async () => {
     const { name, payer, amount } = newExpense;
 
-    // Kiểm tra validation
     if (!name.trim()) {
       ToastAndroid.show("Tên chi phí không được để trống.", ToastAndroid.SHORT);
       return;
@@ -149,26 +176,30 @@ export default function App() {
       payer,
       amount: parseFloat(amount),
       paided: newExpense.paided,
+      dateCreated: Timestamp.fromDate(new Date()),
     };
 
     try {
       await createExpense(expenseData);
-      setModalVisible(false); // Đóng modal sau khi tạo chi phí
+      setModalVisible(false);
       setNewExpense({
         name: "",
         payer: "",
         amount: 0,
         paided: [],
       });
+      getAllPushTokens().then((tokens) => {
+        sendPushNotification(tokens);
+      });
       ToastAndroid.show("Chi phí đã được tạo thành công!", ToastAndroid.SHORT);
     } catch (error) {
       ToastAndroid.show("Đã xảy ra lỗi khi tạo chi phí.", ToastAndroid.SHORT);
     }
+    console.log(notification);
   };
 
   const handleEditExpense = async () => {
-    const { name, amount } = newExpense;
-
+    const { name, amount } = selectedExpense;
     if (!name.trim()) {
       alert("Tên chi phí không được để trống.");
       return;
@@ -179,22 +210,10 @@ export default function App() {
       return;
     }
 
-    const updatedExpense = {
-      name,
-      payer: newExpense.payer,
-      amount: parseFloat(amount),
-      paided: newExpense.paided,
-    };
-
     try {
-      await updateExpense(selectedExpense.id, updatedExpense);
+      await updateExpense(selectedExpense.id, selectedExpense);
       setEditModalVisible(false);
-      setNewExpense({
-        name: "",
-        payer: "",
-        amount: 0,
-        paided: [],
-      });
+      setSelectedExpense(null);
     } catch (error) {
       alert("Đã xảy ra lỗi khi cập nhật chi phí.");
     }
@@ -202,13 +221,15 @@ export default function App() {
 
   const handleEditButtonPress = (expense) => {
     setSelectedExpense(expense);
-    console.log(expense);
     setEditModalVisible(true);
   };
 
   useEffect(() => {
     registerForPushNotificationsAsync()
-      .then((token) => setExpoPushToken(token ?? ""))
+      .then((token) => {
+        setExpoPushToken(token ?? "");
+        savePushTokenToDatabase(token);
+      })
       .catch((error) => setExpoPushToken(`${error}`));
 
     notificationListener.current =
@@ -243,6 +264,12 @@ export default function App() {
         paddingTop: Constants.statusBarHeight,
       }}
     >
+      <StatusBar
+        barStyle="dark-content" // Chế độ màu của văn bản thanh trạng thái
+        backgroundColor="#ffffff" // Màu nền thanh trạng thái
+        translucent={false} // Có làm trong suốt không
+      />
+      <Text>Your Expo push token: {expoPushToken}</Text>
       {/* <Text>Your Expo push token: {expoPushToken}</Text>
       <View style={{ alignItems: 'center', justifyContent: 'center' }}>
         <Text>Title: {notification && notification.request.content.title} </Text>
@@ -300,10 +327,13 @@ export default function App() {
               }
             >
               <Picker.Item label="Chọn người chi trả" value="" />
-              <Picker.Item label="Nam" value="Nam" />
-              <Picker.Item label="Tân" value="Tân" />
-              <Picker.Item label="Tuyển" value="Tuyển" />
-              <Picker.Item label="Định" value="Định" />
+              {PEOPLE_LIST.map((person) => (
+                <Picker.Item
+                  key={person.value}
+                  label={person.label}
+                  value={person.value}
+                />
+              ))}
             </Picker>
 
             {/* Nhập số tiền chi trả */}
@@ -345,7 +375,7 @@ export default function App() {
               placeholder="Tên chi phí"
               value={selectedExpense?.name}
               onChangeText={(text) =>
-                setNewExpense({ ...selectedExpense, name: text })
+                setSelectedExpense({ ...selectedExpense, name: text })
               }
             />
 
@@ -354,14 +384,17 @@ export default function App() {
               selectedValue={selectedExpense?.payer}
               style={styles.picker}
               onValueChange={(itemValue) =>
-                setNewExpense({ ...selectedExpense, payer: itemValue })
+                setSelectedExpense({ ...selectedExpense, payer: itemValue })
               }
             >
               <Picker.Item label="Chọn người chi trả" value="" />
-              <Picker.Item label="Nam" value="Nam" />
-              <Picker.Item label="Tân" value="Tân" />
-              <Picker.Item label="Tuyển" value="Tuyển" />
-              <Picker.Item label="Định" value="Định" />
+              {PEOPLE_LIST.map((person) => (
+                <Picker.Item
+                  key={person.value}
+                  label={person.label}
+                  value={person.value}
+                />
+              ))}
             </Picker>
 
             <TextInput
@@ -369,7 +402,7 @@ export default function App() {
               placeholder="Số tiền chi trả"
               value={selectedExpense?.amount.toString()}
               onChangeText={(text) =>
-                setNewExpense({
+                setSelectedExpense({
                   ...selectedExpense,
                   amount: parseFloat(text) || 0,
                 })
@@ -386,26 +419,39 @@ export default function App() {
               inputSearchStyle={styles.inputSearchStyle}
               iconStyle={styles.iconStyle}
               search
-              data={[
-                { label: "Nam", value: "Nam" },
-                { label: "Tân", value: "Tân" },
-                { label: "Tuyển", value: "Tuyển" },
-                { label: "Định", value: "Định" },
-              ]}
+              data={PEOPLE_LIST.filter(
+                (person) => person.value !== selectedExpense?.payer
+              )}
               labelField="label"
               valueField="value"
               placeholder="Select item"
               searchPlaceholder="Search..."
-              value={selectedExpense?.paided || []} // Đảm bảo là một mảng
+              value={selectedExpense?.paided || []}
               onChange={(items) => {
-                // `items` là mảng chứa các mục đã chọn
-                console.log(items);
                 setSelectedExpense((prev) => ({
                   ...prev,
-                  paided: items.map((item) => item), // Chỉ lấy giá trị của các mục đã chọn
+                  paided: items.map((item) => item),
                 }));
               }}
               selectedStyle={styles.selectedStyle}
+              renderItem={(item) => (
+                <View style={[styles.item, { backgroundColor: item.color }]}>
+                  <Text style={styles.itemText}>{item.label}</Text>
+                </View>
+              )}
+              renderSelectedItem={(item, unSelect) => (
+                <TouchableOpacity onPress={() => unSelect && unSelect(item)}>
+                  <View
+                    style={[
+                      styles.selectedStyle,
+                      { backgroundColor: item.color },
+                    ]}
+                  >
+                    <Text style={styles.textSelectedStyle}>{item.label}</Text>
+                    <AntDesign color="white" name="delete" size={17} />
+                  </View>
+                </TouchableOpacity>
+              )}
             />
 
             <View style={styles.buttonGroup}>
@@ -421,17 +467,57 @@ export default function App() {
         data={expenses}
         keyExtractor={(item) => item.id}
         style={{ width: "100%" }}
-        renderItem={({ item }) => (
-          <View style={styles.expenseItem}>
-            <Text style={styles.expenseText}>Tên: {item.name}</Text>
-            <Text style={styles.expenseText}>Người chi trả: {item.payer}</Text>
-            <Text style={styles.expenseText}>Số tiền: {item.amount}</Text>
-            <Button
-              title="Chỉnh sửa"
-              onPress={() => handleEditButtonPress(item)}
-            />
-          </View>
-        )}
+        renderItem={({ item }) => {
+          const payerPerson = PEOPLE_LIST.find((p) => p.value === item.payer);
+          const payerColor = payerPerson ? payerPerson.color : "#fff";
+
+          return (
+            <View style={styles.expenseItem}>
+              <Text style={styles.expenseText}>Tên: {item.name}</Text>
+              <View style={[styles.paidContainer]}>
+                <Text style={styles.expenseText}>Người chi trả: </Text>
+                <View
+                  style={[
+                    {
+                      backgroundColor: payerColor,
+                    },
+                    styles.paidTag,
+                  ]}
+                >
+                  <Text style={styles.paidTagText}>{item.payer}</Text>
+                </View>
+              </View>
+              <Text style={styles.expenseText}>
+                Số tiền:{" "}
+                {new Intl.NumberFormat("vi-VN", {
+                  style: "currency",
+                  currency: "VND",
+                }).format(item.amount)}
+              </Text>
+              <View style={styles.paidContainer}>
+                <Text style={styles.expenseText}>Đã trả: </Text>
+                {item.paided.map((payer) => {
+                  const person = PEOPLE_LIST.find((p) => p.value === payer);
+                  return (
+                    <View
+                      key={payer}
+                      style={[
+                        styles.paidTag,
+                        { backgroundColor: person?.color },
+                      ]}
+                    >
+                      <Text style={styles.paidTagText}>{payer}</Text>
+                    </View>
+                  );
+                })}
+              </View>
+              <Button
+                title="Chỉnh sửa"
+                onPress={() => handleEditButtonPress(item)}
+              />
+            </View>
+          );
+        }}
       />
     </SafeAreaView>
   );
@@ -446,7 +532,7 @@ const styles = StyleSheet.create({
   modalOverlay: {
     flex: 1,
     justifyContent: "center",
-    backgroundColor: "rgba(0, 0, 0, 0.5)", // Màu nền tối cho modal
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
   },
   modalView: {
     margin: 20,
@@ -486,6 +572,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     justifyContent: "space-between",
     width: "100%",
+    paddingTop: 15,
   },
   expenseItem: {
     padding: 10,
@@ -495,6 +582,21 @@ const styles = StyleSheet.create({
   },
   expenseText: {
     fontSize: 16,
+  },
+  paidContainer: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    paddingBottom: 10,
+  },
+  paidTag: {
+    borderRadius: 5,
+    padding: 5,
+    marginRight: 5,
+    marginBottom: 5,
+  },
+  paidTagText: {
+    color: "#fff",
   },
   dropdown: {
     height: 50,
@@ -519,7 +621,37 @@ const styles = StyleSheet.create({
   icon: {
     marginRight: 5,
   },
+  item: {
+    padding: 10,
+    borderRadius: 5,
+    marginVertical: 5,
+  },
+  itemText: {
+    color: "#fff",
+  },
   selectedStyle: {
-    borderRadius: 12,
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    borderRadius: 14,
+    backgroundColor: "white",
+    shadowColor: "#000",
+    marginTop: 8,
+    marginRight: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    shadowOffset: {
+      width: 0,
+      height: 1,
+    },
+    shadowOpacity: 0.2,
+    shadowRadius: 1.41,
+
+    elevation: 2,
+  },
+  textSelectedStyle: {
+    marginRight: 5,
+    fontSize: 16,
+    color: "white",
   },
 });

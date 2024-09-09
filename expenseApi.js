@@ -1,4 +1,5 @@
 import { db } from "./firebase"; // Đường dẫn này tùy thuộc vào vị trí file firebaseConfig.js
+
 import {
   collection,
   getDocs,
@@ -7,6 +8,8 @@ import {
   deleteDoc,
   addDoc,
   onSnapshot,
+  query,
+  where,
 } from "firebase/firestore";
 
 export const listenToExpenses = (callback) => {
@@ -22,12 +25,18 @@ export const listenToExpenses = (callback) => {
 
 // Lấy danh sách các chi phí
 export const getExpenses = async () => {
-  const expensesCol = collection(db, "expenses"); // 'expenses' là tên collection trong Firestore
-  const expensesSnapshot = await getDocs(expensesCol);
+  // Tạo truy vấn với sắp xếp theo dateCreated từ mới nhất đến cũ nhất
+  const expensesQuery = query(
+    collection(db, "expenses"),
+    orderBy("dateCreated", "desc") // 'desc' để sắp xếp từ mới nhất đến cũ nhất
+  );
+
+  const expensesSnapshot = await getDocs(expensesQuery);
   const expenseList = expensesSnapshot.docs.map((doc) => ({
     id: doc.id,
     ...doc.data(),
   }));
+
   return expenseList;
 };
 
@@ -49,3 +58,35 @@ export const createExpense = async (expenseData) => {
   const newExpenseRef = await addDoc(expensesCol, expenseData);
   return { id: newExpenseRef.id, ...expenseData };
 };
+
+export async function savePushTokenToDatabase(expoPushToken) {
+  try {
+    const tokensRef = collection(db, "expoPushTokens");
+    const q = query(tokensRef, where("expoPushToken", "==", expoPushToken));
+
+    const querySnapshot = await getDocs(q);
+
+    if (querySnapshot.empty) {
+      await addDoc(tokensRef, {
+        expoPushToken: expoPushToken,
+      });
+      console.log("Token saved to database!");
+    } else {
+      console.log("Token already exists in the database.");
+    }
+  } catch (error) {
+    console.error("Error saving token to database: ", error);
+  }
+}
+
+export async function getAllPushTokens() {
+  const querySnapshot = await getDocs(collection(db, "expoPushTokens"));
+  const expoPushTokens = [];
+  querySnapshot.forEach((doc) => {
+    const data = doc.data();
+    if (data.expoPushToken) {
+      expoPushTokens.push(data.expoPushToken);
+    }
+  });
+  return expoPushTokens;
+}
